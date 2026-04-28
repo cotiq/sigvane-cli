@@ -16,7 +16,7 @@ GitHub -> Sigvane inbox -> Sigvane CLI -> your command
 
 ## Why
 
-Use Sigvane CLI when you want to process webhook events without exposing your own service to the public internet.
+Use Sigvane CLI when you want to process webhook events without exposing your machine to the public internet.
 
 - No public endpoints to deploy or maintain
 - Works locally or behind a firewall
@@ -49,8 +49,8 @@ go install github.com/cotiq/sigvane-cli/cmd/sigvane@latest
 
 ## Quick start
 
-This example assumes you already have a Sigvane inbox and API key. It uses a simple handler that prints each inbox
-item to your terminal.
+This example assumes you already have a Sigvane inbox and API key. It uses a simple handler that prints each event
+JSON to your terminal.
 
 1. Generate a starter config:
 
@@ -75,22 +75,23 @@ handlers:
     stdin: full_item
 ```
 
-Replace `github-repo` with your inbox slug. If you prefer to store your API key directly in the config file, replace
-`${SIGVANE_API_KEY}` with your key.
+Replace `github-repo` with your inbox slug.
 
-3. If you kept `api_key: ${SIGVANE_API_KEY}`, export your API key:
+Set your API key as an environment variable:
 
-```bash
-export SIGVANE_API_KEY='replace-me'
-```
+  ```bash
+  export SIGVANE_API_KEY='replace-me'
+  ```
 
-4. Check the config:
+Or configure it directly in the config file.
+
+3. Check the config:
 
 ```bash
 sigvane config check
 ```
 
-5. Poll once:
+4. Poll once:
 
 ```bash
 sigvane inbox poll --once
