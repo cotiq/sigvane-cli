@@ -19,11 +19,20 @@ available at [docs.sigvane.com](https://docs.sigvane.com).
 
 ## Install
 
+Choose one of the following installation options.
+
+### Install With Go
+
 Requires Go 1.26.2 or newer.
 
 ```bash
 go install github.com/cotiq/sigvane-cli/cmd/sigvane@latest
 ```
+
+### Download a Release Package
+
+Download the latest release package for your platform from the
+[GitHub Releases page](https://github.com/cotiq/sigvane-cli/releases/latest).
 
 ## Build From Source
 
