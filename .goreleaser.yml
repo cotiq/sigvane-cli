@@ -1,0 +1,29 @@
+version: 2
+
+project_name: sigvane-cli
+
+builds:
+  - id: sigvane
+    main: ./cmd/sigvane
+    binary: sigvane
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+      - darwin
+      - windows
+    goarch:
+      - amd64
+      - arm64
+    ldflags:
+      - -s -w -X github.com/cotiq/sigvane-cli/internal/version.Version={{ .Version }} -X github.com/cotiq/sigvane-cli/internal/version.Commit={{ .Commit }} -X github.com/cotiq/sigvane-cli/internal/version.Date={{ .Date }}
+
+archives:
+  - id: default
+    formats: [tar.gz]
+    format_overrides:
+      - goos: windows
+        formats: [zip]
+
+checksum:
+  name_template: checksums.txt
