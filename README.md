@@ -21,6 +21,19 @@ available at [docs.sigvane.com](https://docs.sigvane.com).
 
 Choose one of the following installation options.
 
+### Download a Release Package
+
+If you are not familiar with Go, use this option. No Go installation is required.
+
+1. Download the latest release package for your platform from the
+   [GitHub Releases page](https://github.com/cotiq/sigvane-cli/releases/latest).
+2. Extract the archive.
+3. Move `sigvane` (or `sigvane.exe` on Windows) to a directory on your `PATH`.
+4. Run `sigvane version` to confirm the installation.
+
+For detailed platform-specific installation steps, see
+[CLI getting started](https://docs.sigvane.com/cli/getting-started/).
+
 ### Install With Go
 
 Requires Go 1.26.2 or newer.
@@ -29,12 +42,9 @@ Requires Go 1.26.2 or newer.
 go install github.com/cotiq/sigvane-cli/cmd/sigvane@latest
 ```
 
-### Download a Release Package
-
-Download the latest release package for your platform from the
-[GitHub Releases page](https://github.com/cotiq/sigvane-cli/releases/latest).
-
 ## Build From Source
+
+Requires Go 1.26.2 or newer.
 
 From the repository root:
 
@@ -45,7 +55,7 @@ go build -o ./bin/sigvane ./cmd/sigvane
 ## Documentation
 
 See [CLI getting started](https://docs.sigvane.com/cli/getting-started/) for installation, configuration, and polling
-instructions.
+instructions, plus the rest of the product and CLI documentation on [docs.sigvane.com](https://docs.sigvane.com).
 
 ## License
 
