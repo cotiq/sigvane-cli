@@ -681,6 +681,17 @@ func TestBoundedTailWriter(t *testing.T) {
 		}
 	})
 
+	t.Run("large write keeps only last bytes", func(t *testing.T) {
+		writer := newBoundedTailWriter(5)
+
+		if n, err := writer.Write([]byte("abcdefgh")); err != nil || n != 8 {
+			t.Fatalf("Write returned (%d, %v), want (8, nil)", n, err)
+		}
+		if got := writer.String(); got != "defgh" {
+			t.Fatalf("tail = %q, want %q", got, "defgh")
+		}
+	})
+
 	t.Run("limit zero discards while reporting bytes written", func(t *testing.T) {
 		writer := newBoundedTailWriter(0)
 

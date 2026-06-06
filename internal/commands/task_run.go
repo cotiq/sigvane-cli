@@ -365,9 +365,16 @@ func (w *boundedTailWriter) Write(p []byte) (int, error) {
 		return len(p), nil
 	}
 
+	if len(p) >= w.limit {
+		w.buf = append(w.buf[:0], p[len(p)-w.limit:]...)
+		return len(p), nil
+	}
+
 	w.buf = append(w.buf, p...)
 	if len(w.buf) > w.limit {
-		w.buf = w.buf[len(w.buf)-w.limit:]
+		excess := len(w.buf) - w.limit
+		copy(w.buf, w.buf[excess:])
+		w.buf = w.buf[:w.limit]
 	}
 
 	return len(p), nil
