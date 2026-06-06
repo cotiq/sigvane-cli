@@ -152,36 +152,10 @@ func runTaskRun(ctx context.Context, cmd *cobra.Command, opts taskRunOptions) er
 		}
 
 		outcome, reason := taskOutcomeForHandlerResult(result)
-		outcomeCtx, cancelOutcome, duringShutdown := taskOutcomeReportContext(ctx, cfg.Server.ShutdownGracePeriod)
-		err = reportTaskOutcomeWithRetry(outcomeCtx, cmd, client, claim.Task, outcome, reason)
-		cancelOutcome()
-		if err != nil {
-			if shouldIgnoreOutcomeReportCancellation(err, duringShutdown) {
-				return nil
-			}
+		if err := reportTaskOutcomeWithRetry(ctx, cmd, client, claim.Task, outcome, reason, cfg.Server.ShutdownGracePeriod); err != nil {
 			return err
 		}
 	}
-}
-
-func taskOutcomeReportContext(parent context.Context, gracePeriod time.Duration) (context.Context, context.CancelFunc, bool) {
-	if parent.Err() == nil {
-		return parent, func() {}, false
-	}
-	if gracePeriod <= 0 {
-		gracePeriod = config.DefaultShutdownGracePeriod
-	}
-
-	ctx, cancel := context.WithTimeout(context.Background(), gracePeriod)
-	return ctx, cancel, true
-}
-
-func shouldIgnoreOutcomeReportCancellation(err error, duringShutdown bool) bool {
-	if !duringShutdown {
-		return false
-	}
-
-	return errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)
 }
 
 func selectTaskHandlers(tasks []config.TaskConfig, kindFilter string) ([]config.TaskConfig, error) {
@@ -295,18 +269,31 @@ func taskFailureReason(result taskHandlerResult) string {
 }
 
 func reportTaskOutcomeWithRetry(
-	ctx context.Context,
+	parent context.Context,
 	cmd *cobra.Command,
 	client *sigvane.Client,
 	task sigvane.Task,
 	outcome taskOutcome,
 	reason string,
+	shutdownGracePeriod time.Duration,
 ) error {
 	backoff := time.Second
+	ctx := parent
+	cancelShutdownContext := func() {}
+	usingShutdownContext := false
+	defer cancelShutdownContext()
 
 	for {
 		err := reportTaskOutcome(ctx, client, task, outcome, reason)
 		if err == nil {
+			return nil
+		}
+		if shouldSwitchToShutdownOutcomeContext(parent, err, usingShutdownContext) {
+			ctx, cancelShutdownContext = newShutdownOutcomeContext(shutdownGracePeriod)
+			usingShutdownContext = true
+			continue
+		}
+		if shouldIgnoreShutdownOutcomeContextError(err, usingShutdownContext) {
 			return nil
 		}
 
@@ -334,6 +321,14 @@ func reportTaskOutcomeWithRetry(
 		)
 
 		if sleepErr := sleepContext(ctx, backoff); sleepErr != nil {
+			if shouldSwitchToShutdownOutcomeContext(parent, sleepErr, usingShutdownContext) {
+				ctx, cancelShutdownContext = newShutdownOutcomeContext(shutdownGracePeriod)
+				usingShutdownContext = true
+				continue
+			}
+			if shouldIgnoreShutdownOutcomeContextError(sleepErr, usingShutdownContext) {
+				return nil
+			}
 			return sleepErr
 		}
 
@@ -342,6 +337,21 @@ func reportTaskOutcomeWithRetry(
 			backoff = 30 * time.Second
 		}
 	}
+}
+
+func shouldSwitchToShutdownOutcomeContext(parent context.Context, err error, usingShutdownContext bool) bool {
+	return !usingShutdownContext && parent.Err() != nil && errors.Is(err, context.Canceled)
+}
+
+func newShutdownOutcomeContext(gracePeriod time.Duration) (context.Context, context.CancelFunc) {
+	if gracePeriod <= 0 {
+		gracePeriod = config.DefaultShutdownGracePeriod
+	}
+	return context.WithTimeout(context.Background(), gracePeriod)
+}
+
+func shouldIgnoreShutdownOutcomeContextError(err error, usingShutdownContext bool) bool {
+	return usingShutdownContext && (errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded))
 }
 
 func reportTaskOutcome(ctx context.Context, client *sigvane.Client, task sigvane.Task, outcome taskOutcome, reason string) error {

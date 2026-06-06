@@ -473,3 +473,68 @@ tasks:
 		t.Fatalf("complete request count = %d, want 1", completeRequests)
 	}
 }
+
+func TestTaskRunOutcomeReportSurvivesCancellationDuringReport(t *testing.T) {
+	tempDir := t.TempDir()
+	configPath := filepath.Join(tempDir, "sigvane.yaml")
+	t.Setenv("SIGVANE_API_KEY", "test-api-key")
+
+	const taskID = "00000000-0000-7000-8000-000000000174"
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	var mu sync.Mutex
+	completeRequests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/v1/tasks/claim":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = io.WriteString(w, `{"id":"`+taskID+`","kind":"github_pr_review","payload":{},"attempts":1,"leaseToken":"lease-token","leaseDeadline":"2026-06-06T12:00:00Z"}`)
+		case "/v1/tasks/" + taskID + "/complete":
+			var body map[string]string
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+				t.Fatalf("decode complete body: %v", err)
+			}
+			if body["leaseToken"] != "lease-token" {
+				t.Fatalf("complete leaseToken = %q, want lease-token", body["leaseToken"])
+			}
+
+			mu.Lock()
+			completeRequests++
+			currentRequest := completeRequests
+			mu.Unlock()
+
+			if currentRequest == 1 {
+				cancel()
+				<-r.Context().Done()
+				return
+			}
+			w.WriteHeader(http.StatusOK)
+		default:
+			t.Fatalf("unexpected request path %q", r.URL.Path)
+		}
+	}))
+	defer server.Close()
+
+	writeTestFile(t, configPath, `
+version: 1
+server:
+  url: `+server.URL+`
+  api_key: ${SIGVANE_API_KEY}
+  shutdown_grace_period: 2s
+tasks:
+  - kind: github_pr_review
+    command: ["/usr/bin/true"]
+`)
+
+	_, _, err := executeCommandWithContext(ctx, "task", "run", "--config", configPath, "--once")
+	if err != nil {
+		t.Fatalf("expected graceful shutdown after retrying outcome report, got error: %v", err)
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	if completeRequests != 2 {
+		t.Fatalf("complete request count = %d, want 2", completeRequests)
+	}
+}
