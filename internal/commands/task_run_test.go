@@ -376,7 +376,7 @@ func TestTaskRunPropagatesNonTransientOutcomeError(t *testing.T) {
 	const taskID = "00000000-0000-7000-8000-000000000174"
 	sleepCalled := false
 	previousSleep := sleepContext
-	sleepContext = func(_ context.Context, d time.Duration) error {
+	sleepContext = func(_ context.Context, _ time.Duration) error {
 		sleepCalled = true
 		return nil
 	}
