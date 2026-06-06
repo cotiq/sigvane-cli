@@ -144,10 +144,6 @@ func runTaskRun(ctx context.Context, cmd *cobra.Command, opts taskRunOptions) er
 			if errors.Is(err, context.Canceled) {
 				return nil
 			}
-			var shutdownTimeoutErr *taskHandlerShutdownTimeoutError
-			if errors.As(err, &shutdownTimeoutErr) {
-				return err
-			}
 			return err
 		}
 
