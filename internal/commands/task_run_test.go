@@ -298,6 +298,133 @@ tasks:
 	}
 }
 
+func TestTaskRunWithKindFilterClaimsOnlySelectedKind(t *testing.T) {
+	tempDir := t.TempDir()
+	configPath := filepath.Join(tempDir, "sigvane.yaml")
+	t.Setenv("SIGVANE_API_KEY", "test-api-key")
+
+	claimRequests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/v1/tasks/claim":
+			claimRequests++
+			var body struct {
+				Kinds []string `json:"kinds"`
+			}
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+				t.Fatalf("decode claim body: %v", err)
+			}
+			if len(body.Kinds) != 1 || body.Kinds[0] != "github_pr_review" {
+				t.Fatalf("claim kinds = %#v, want only github_pr_review", body.Kinds)
+			}
+			w.WriteHeader(http.StatusNoContent)
+		default:
+			t.Fatalf("unexpected request path %q", r.URL.Path)
+		}
+	}))
+	defer server.Close()
+
+	writeTestFile(t, configPath, `
+version: 1
+server:
+  url: `+server.URL+`
+  api_key: ${SIGVANE_API_KEY}
+tasks:
+  - kind: github_pr_review
+    command: ["/usr/bin/true"]
+  - kind: issue_triage
+    command: ["/usr/bin/true"]
+`)
+
+	_, _, err := executeCommand("task", "run", "--config", configPath, "--once", "github_pr_review")
+	if err != nil {
+		t.Fatalf("task run returned error: %v", err)
+	}
+	if claimRequests != 1 {
+		t.Fatalf("claim request count = %d, want 1", claimRequests)
+	}
+}
+
+func TestTaskRunWithUnknownKindFailsBeforeClaim(t *testing.T) {
+	tempDir := t.TempDir()
+	configPath := filepath.Join(tempDir, "sigvane.yaml")
+
+	writeTestFile(t, configPath, `
+version: 1
+server:
+  url: https://api.sigvane.com
+  api_key: plain-token
+tasks:
+  - kind: github_pr_review
+    command: ["/usr/bin/true"]
+`)
+
+	_, _, err := executeCommand("task", "run", "--config", configPath, "--once", "missing_kind")
+	if err == nil {
+		t.Fatal("expected task run to reject unknown kind filter")
+	}
+	if err.Error() != `task kind "missing_kind" not found in config` {
+		t.Fatalf("error = %q, want missing kind message", err.Error())
+	}
+}
+
+func TestTaskRunPropagatesNonTransientOutcomeError(t *testing.T) {
+	tempDir := t.TempDir()
+	configPath := filepath.Join(tempDir, "sigvane.yaml")
+	t.Setenv("SIGVANE_API_KEY", "test-api-key")
+
+	const taskID = "00000000-0000-7000-8000-000000000174"
+	sleepCalled := false
+	previousSleep := sleepContext
+	sleepContext = func(_ context.Context, d time.Duration) error {
+		sleepCalled = true
+		return nil
+	}
+	defer func() {
+		sleepContext = previousSleep
+	}()
+
+	completeRequests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/v1/tasks/claim":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = io.WriteString(w, `{"id":"`+taskID+`","kind":"github_pr_review","payload":{},"attempts":1,"leaseToken":"lease-token","leaseDeadline":"2026-06-06T12:00:00Z"}`)
+		case "/v1/tasks/" + taskID + "/complete":
+			completeRequests++
+			w.WriteHeader(http.StatusBadRequest)
+			_, _ = io.WriteString(w, "bad outcome")
+		default:
+			t.Fatalf("unexpected request path %q", r.URL.Path)
+		}
+	}))
+	defer server.Close()
+
+	writeTestFile(t, configPath, `
+version: 1
+server:
+  url: `+server.URL+`
+  api_key: ${SIGVANE_API_KEY}
+tasks:
+  - kind: github_pr_review
+    command: ["/usr/bin/true"]
+`)
+
+	_, _, err := executeCommand("task", "run", "--config", configPath, "--once")
+	if err == nil {
+		t.Fatal("expected task run to propagate non-transient outcome error")
+	}
+	if !strings.Contains(err.Error(), `POST /v1/tasks/`+taskID+`/complete returned 400: bad outcome`) {
+		t.Fatalf("error = %q, want non-transient outcome status", err.Error())
+	}
+	if completeRequests != 1 {
+		t.Fatalf("complete request count = %d, want 1", completeRequests)
+	}
+	if sleepCalled {
+		t.Fatal("backoff sleep should not run for non-transient outcome status")
+	}
+}
+
 func TestTaskRunAbortsWithoutOutcomeWhenHandlerCannotStart(t *testing.T) {
 	tempDir := t.TempDir()
 	configPath := filepath.Join(tempDir, "sigvane.yaml")
@@ -537,4 +664,31 @@ tasks:
 	if completeRequests != 2 {
 		t.Fatalf("complete request count = %d, want 2", completeRequests)
 	}
+}
+
+func TestBoundedTailWriter(t *testing.T) {
+	t.Run("keeps last bytes up to limit", func(t *testing.T) {
+		writer := newBoundedTailWriter(5)
+
+		if n, err := writer.Write([]byte("abc")); err != nil || n != 3 {
+			t.Fatalf("Write returned (%d, %v), want (3, nil)", n, err)
+		}
+		if n, err := writer.Write([]byte("defg")); err != nil || n != 4 {
+			t.Fatalf("Write returned (%d, %v), want (4, nil)", n, err)
+		}
+		if got := writer.String(); got != "cdefg" {
+			t.Fatalf("tail = %q, want %q", got, "cdefg")
+		}
+	})
+
+	t.Run("limit zero discards while reporting bytes written", func(t *testing.T) {
+		writer := newBoundedTailWriter(0)
+
+		if n, err := writer.Write([]byte("abc")); err != nil || n != 3 {
+			t.Fatalf("Write returned (%d, %v), want (3, nil)", n, err)
+		}
+		if got := writer.String(); got != "" {
+			t.Fatalf("tail = %q, want empty tail", got)
+		}
+	})
 }
