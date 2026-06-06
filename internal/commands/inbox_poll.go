@@ -386,35 +386,32 @@ func listInboxItemsWithRetry(
 	inboxID string,
 	cursor string,
 ) (sigvane.FeedResponse, error) {
-	backoff := time.Second
-
-	for {
-		feed, err := client.ListInboxItems(ctx, inboxID, cursor)
-		if err == nil {
-			return feed, nil
-		}
-
-		if !isTransientAPIError(err) {
-			return sigvane.FeedResponse{}, err
-		}
-
-		_, _ = fmt.Fprintf(
-			cmd.ErrOrStderr(),
-			"warning: transient feed error for inbox %q: %v; retrying in %s\n",
-			handlerInbox,
-			err,
-			backoff,
-		)
-
-		if sleepErr := sleepContext(ctx, backoff); sleepErr != nil {
-			return sigvane.FeedResponse{}, sleepErr
-		}
-
-		backoff *= 2
-		if backoff > 30*time.Second {
-			backoff = 30 * time.Second
-		}
+	var feed sigvane.FeedResponse
+	err := retryWithBackoff(retryWithBackoffOptions{
+		Operation: func() error {
+			var err error
+			feed, err = client.ListInboxItems(ctx, inboxID, cursor)
+			return err
+		},
+		Classify: classifyTransientAPIError,
+		Warn: func(err error, backoff time.Duration) {
+			_, _ = fmt.Fprintf(
+				cmd.ErrOrStderr(),
+				"warning: transient feed error for inbox %q: %v; retrying in %s\n",
+				handlerInbox,
+				err,
+				backoff,
+			)
+		},
+		Sleep: func(backoff time.Duration) error {
+			return sleepContext(ctx, backoff)
+		},
+	})
+	if err != nil {
+		return sigvane.FeedResponse{}, err
 	}
+
+	return feed, nil
 }
 
 func isTransientAPIError(err error) bool {

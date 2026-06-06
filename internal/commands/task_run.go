@@ -178,34 +178,31 @@ func claimTaskWithRetry(
 	client *sigvane.Client,
 	kinds []string,
 ) (sigvane.ClaimTaskResponse, error) {
-	backoff := time.Second
-
-	for {
-		claim, err := client.ClaimTask(ctx, kinds)
-		if err == nil {
-			return claim, nil
-		}
-
-		if !isTransientAPIError(err) {
-			return sigvane.ClaimTaskResponse{}, err
-		}
-
-		_, _ = fmt.Fprintf(
-			cmd.ErrOrStderr(),
-			"warning: transient task claim error: %v; retrying in %s\n",
-			err,
-			backoff,
-		)
-
-		if sleepErr := sleepContext(ctx, backoff); sleepErr != nil {
-			return sigvane.ClaimTaskResponse{}, sleepErr
-		}
-
-		backoff *= 2
-		if backoff > 30*time.Second {
-			backoff = 30 * time.Second
-		}
+	var claim sigvane.ClaimTaskResponse
+	err := retryWithBackoff(retryWithBackoffOptions{
+		Operation: func() error {
+			var err error
+			claim, err = client.ClaimTask(ctx, kinds)
+			return err
+		},
+		Classify: classifyTransientAPIError,
+		Warn: func(err error, backoff time.Duration) {
+			_, _ = fmt.Fprintf(
+				cmd.ErrOrStderr(),
+				"warning: transient task claim error: %v; retrying in %s\n",
+				err,
+				backoff,
+			)
+		},
+		Sleep: func(backoff time.Duration) error {
+			return sleepContext(ctx, backoff)
+		},
+	})
+	if err != nil {
+		return sigvane.ClaimTaskResponse{}, err
 	}
+
+	return claim, nil
 }
 
 func runTaskHandler(
@@ -277,66 +274,51 @@ func reportTaskOutcomeWithRetry(
 	reason string,
 	shutdownGracePeriod time.Duration,
 ) error {
-	backoff := time.Second
 	ctx := parent
 	cancelShutdownContext := func() {}
 	usingShutdownContext := false
 	defer cancelShutdownContext()
 
-	for {
-		err := reportTaskOutcome(ctx, client, task, outcome, reason)
-		if err == nil {
-			return nil
-		}
-		if shouldSwitchToShutdownOutcomeContext(parent, err, usingShutdownContext) {
-			ctx, cancelShutdownContext = newShutdownOutcomeContext(shutdownGracePeriod)
-			usingShutdownContext = true
-			continue
-		}
-		if shouldIgnoreShutdownOutcomeContextError(err, usingShutdownContext) {
-			return nil
-		}
-
-		var statusErr *sigvane.HTTPStatusError
-		if errors.As(err, &statusErr) && statusErr.StatusCode == 409 {
-			_, _ = fmt.Fprintf(
-				cmd.ErrOrStderr(),
-				"warning: task %q outcome %q was not applied because the lease was stale or already resolved\n",
-				task.ID,
-				outcome,
-			)
-			return nil
-		}
-
-		if !isTransientAPIError(err) {
-			return err
-		}
-
-		_, _ = fmt.Fprintf(
-			cmd.ErrOrStderr(),
-			"warning: transient task outcome error for task %q: %v; retrying in %s\n",
-			task.ID,
-			err,
-			backoff,
-		)
-
-		if sleepErr := sleepContext(ctx, backoff); sleepErr != nil {
-			if shouldSwitchToShutdownOutcomeContext(parent, sleepErr, usingShutdownContext) {
+	return retryWithBackoff(retryWithBackoffOptions{
+		Operation: func() error {
+			return reportTaskOutcome(ctx, client, task, outcome, reason)
+		},
+		Classify: func(err error) (retryAction, error) {
+			if shouldSwitchToShutdownOutcomeContext(parent, err, usingShutdownContext) {
 				ctx, cancelShutdownContext = newShutdownOutcomeContext(shutdownGracePeriod)
 				usingShutdownContext = true
-				continue
+				return retryNow, nil
 			}
-			if shouldIgnoreShutdownOutcomeContextError(sleepErr, usingShutdownContext) {
-				return nil
+			if shouldIgnoreShutdownOutcomeContextError(err, usingShutdownContext) {
+				return retryStop, nil
 			}
-			return sleepErr
-		}
 
-		backoff *= 2
-		if backoff > 30*time.Second {
-			backoff = 30 * time.Second
-		}
-	}
+			var statusErr *sigvane.HTTPStatusError
+			if errors.As(err, &statusErr) && statusErr.StatusCode == 409 {
+				_, _ = fmt.Fprintf(
+					cmd.ErrOrStderr(),
+					"warning: task %q outcome %q was not applied because the lease was stale or already resolved\n",
+					task.ID,
+					outcome,
+				)
+				return retryStop, nil
+			}
+
+			return classifyTransientAPIError(err)
+		},
+		Warn: func(err error, backoff time.Duration) {
+			_, _ = fmt.Fprintf(
+				cmd.ErrOrStderr(),
+				"warning: transient task outcome error for task %q: %v; retrying in %s\n",
+				task.ID,
+				err,
+				backoff,
+			)
+		},
+		Sleep: func(backoff time.Duration) error {
+			return sleepContext(ctx, backoff)
+		},
+	})
 }
 
 func shouldSwitchToShutdownOutcomeContext(parent context.Context, err error, usingShutdownContext bool) bool {
