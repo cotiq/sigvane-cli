@@ -58,6 +58,10 @@ func runInboxPoll(ctx context.Context, cmd *cobra.Command, opts inboxPollOptions
 		return err
 	}
 
+	if len(cfg.Handlers) == 0 {
+		return errors.New("handlers must contain at least one handler for inbox poll")
+	}
+
 	selectedHandlers, err := selectHandlers(cfg.Handlers, opts.slugFilter)
 	if err != nil {
 		return err
@@ -382,38 +386,35 @@ func listInboxItemsWithRetry(
 	inboxID string,
 	cursor string,
 ) (sigvane.FeedResponse, error) {
-	backoff := time.Second
-
-	for {
-		feed, err := client.ListInboxItems(ctx, inboxID, cursor)
-		if err == nil {
-			return feed, nil
-		}
-
-		if !isTransientPollError(err) {
-			return sigvane.FeedResponse{}, err
-		}
-
-		_, _ = fmt.Fprintf(
-			cmd.ErrOrStderr(),
-			"warning: transient feed error for inbox %q: %v; retrying in %s\n",
-			handlerInbox,
-			err,
-			backoff,
-		)
-
-		if sleepErr := sleepContext(ctx, backoff); sleepErr != nil {
-			return sigvane.FeedResponse{}, sleepErr
-		}
-
-		backoff *= 2
-		if backoff > 30*time.Second {
-			backoff = 30 * time.Second
-		}
+	var feed sigvane.FeedResponse
+	err := retryWithBackoff(retryWithBackoffOptions{
+		Operation: func() error {
+			var err error
+			feed, err = client.ListInboxItems(ctx, inboxID, cursor)
+			return err
+		},
+		Classify: classifyTransientAPIError,
+		Warn: func(err error, backoff time.Duration) {
+			_, _ = fmt.Fprintf(
+				cmd.ErrOrStderr(),
+				"warning: transient feed error for inbox %q: %v; retrying in %s\n",
+				handlerInbox,
+				err,
+				backoff,
+			)
+		},
+		Sleep: func(backoff time.Duration) error {
+			return sleepContext(ctx, backoff)
+		},
+	})
+	if err != nil {
+		return sigvane.FeedResponse{}, err
 	}
+
+	return feed, nil
 }
 
-func isTransientPollError(err error) bool {
+func isTransientAPIError(err error) bool {
 	if errors.Is(err, context.Canceled) {
 		return false
 	}

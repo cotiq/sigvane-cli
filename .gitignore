@@ -11,9 +11,11 @@ profile.cov
 go.work
 go.work.sum
 .env
+.DS_Store
 
 /sigvane
 /sigvane.exe
+/bin/
 /dist/
 
 /.idea/

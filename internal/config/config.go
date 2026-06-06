@@ -37,6 +37,7 @@ type Config struct {
 	Version  int             `yaml:"version"`
 	Server   ServerConfig    `yaml:"server"`
 	Handlers []HandlerConfig `yaml:"handlers"`
+	Tasks    []TaskConfig    `yaml:"tasks"`
 }
 
 // ServerConfig holds API connection settings for the Sigvane server.
@@ -52,6 +53,12 @@ type HandlerConfig struct {
 	Inbox   string    `yaml:"inbox"`
 	Command []string  `yaml:"command"`
 	Stdin   StdinMode `yaml:"stdin"`
+}
+
+// TaskConfig maps one task kind to one local command.
+type TaskConfig struct {
+	Kind    string   `yaml:"kind"`
+	Command []string `yaml:"command"`
 }
 
 // Load resolves, parses, expands, and validates the config file.
@@ -145,8 +152,8 @@ func (c *Config) validate() error {
 		return fmt.Errorf("server.shutdown_grace_period must be positive")
 	}
 
-	if len(c.Handlers) == 0 {
-		return errors.New("handlers must contain at least one handler")
+	if len(c.Handlers) == 0 && len(c.Tasks) == 0 {
+		return errors.New("config must contain at least one handler or task")
 	}
 
 	seenInboxes := make(map[string]struct{}, len(c.Handlers))
@@ -176,6 +183,24 @@ func (c *Config) validate() error {
 				StdinModeBody,
 				StdinModeNone,
 			)
+		}
+	}
+
+	seenTaskKinds := make(map[string]struct{}, len(c.Tasks))
+	for index, task := range c.Tasks {
+		if task.Kind == "" {
+			return fmt.Errorf("tasks[%d].kind is required", index)
+		}
+		if _, exists := seenTaskKinds[task.Kind]; exists {
+			return fmt.Errorf("tasks[%d].kind duplicates kind %q", index, task.Kind)
+		}
+		seenTaskKinds[task.Kind] = struct{}{}
+
+		if len(task.Command) == 0 {
+			return fmt.Errorf("tasks[%d].command must contain at least one argv entry", index)
+		}
+		if task.Command[0] == "" {
+			return fmt.Errorf("tasks[%d].command[0] must not be empty", index)
 		}
 	}
 

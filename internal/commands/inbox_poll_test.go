@@ -1029,10 +1029,10 @@ version: 1
 server:
   url: `+server.URL+`
   api_key: ${SIGVANE_API_KEY}
-  shutdown_grace_period: 200ms
+  shutdown_grace_period: 2s
 handlers:
   - inbox: github-repo
-    command: ["`+os.Args[0]+`", "-test.run=TestHelperProcess", "--", "wait-for-term-and-exit", "`+startedPath+`", "`+termPath+`", "50ms", "0"]
+    command: ["`+os.Args[0]+`", "-test.run=TestHelperProcess", "--", "wait-for-term-and-exit", "`+startedPath+`", "`+termPath+`", "10ms", "0"]
     stdin: none
 `)
 
@@ -1191,6 +1191,18 @@ func TestHelperProcess(_ *testing.T) {
 			os.Exit(1)
 		}
 		os.Exit(9)
+	case "stderr-and-exit":
+		message := args[separator+2]
+		exitCode := args[separator+3]
+		_, _ = io.WriteString(os.Stderr, message)
+		switch exitCode {
+		case "1":
+			os.Exit(1)
+		case "79":
+			os.Exit(79)
+		default:
+			os.Exit(9)
+		}
 	case "append-line":
 		outputPath := args[separator+2]
 		line := args[separator+3] + "\n"

@@ -22,6 +22,10 @@ handlers:
   - inbox: github-repo
     command: ["/bin/sh", "-c", "cat"]
     stdin: full_item
+
+tasks:
+  - kind: github_pr_review
+    command: ["/bin/sh", "-c", "cat"]
 `
 
 func newConfigInitCommand() *cobra.Command {

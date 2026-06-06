@@ -269,6 +269,65 @@ handlers:
 	}
 }
 
+func TestLoadAcceptsTaskOnlyConfig(t *testing.T) {
+	tempDir := t.TempDir()
+	configPath := filepath.Join(tempDir, "sigvane.yaml")
+
+	writeTestFile(t, configPath, `
+version: 1
+server:
+  url: https://api.sigvane.com
+  api_key: plain-token
+tasks:
+  - kind: github_pr_review
+    command: ["./bin/review-pr"]
+`)
+
+	cfg, _, err := Load(configPath)
+	if err != nil {
+		t.Fatalf("Load returned error: %v", err)
+	}
+	if len(cfg.Handlers) != 0 {
+		t.Fatalf("handler count = %d, want 0", len(cfg.Handlers))
+	}
+	if len(cfg.Tasks) != 1 {
+		t.Fatalf("task handler count = %d, want 1", len(cfg.Tasks))
+	}
+	if cfg.Tasks[0].Kind != "github_pr_review" {
+		t.Fatalf("task kind = %q, want github_pr_review", cfg.Tasks[0].Kind)
+	}
+}
+
+func TestLoadAcceptsHandlersAndTasks(t *testing.T) {
+	tempDir := t.TempDir()
+	configPath := filepath.Join(tempDir, "sigvane.yaml")
+
+	writeTestFile(t, configPath, `
+version: 1
+server:
+  url: https://api.sigvane.com
+  api_key: plain-token
+handlers:
+  - inbox: github-repo
+    command: ["./bin/process-github"]
+    stdin: full_item
+tasks:
+  - kind: github_pr_review
+    command: ["./bin/review-pr"]
+`)
+
+	cfg, _, err := Load(configPath)
+	if err != nil {
+		t.Fatalf("Load returned error: %v", err)
+	}
+	if len(cfg.Handlers) != 1 {
+		t.Fatalf("handler count = %d, want 1", len(cfg.Handlers))
+	}
+	if len(cfg.Tasks) != 1 {
+		t.Fatalf("task handler count = %d, want 1", len(cfg.Tasks))
+	}
+}
+
 func TestLoadPreservesExplicitPollInterval(t *testing.T) {
 	tempDir := t.TempDir()
 	configPath := filepath.Join(tempDir, "sigvane.yaml")
@@ -368,6 +427,51 @@ handlers:
 	}
 	if !strings.Contains(err.Error(), `duplicates slug "github-repo"`) {
 		t.Fatalf("error = %q, want duplicate slug validation message", err.Error())
+	}
+}
+
+func TestLoadRejectsConfigWithoutRunnableSections(t *testing.T) {
+	tempDir := t.TempDir()
+	configPath := filepath.Join(tempDir, "sigvane.yaml")
+
+	writeTestFile(t, configPath, `
+version: 1
+server:
+  url: https://api.sigvane.com
+  api_key: plain-token
+`)
+
+	_, _, err := Load(configPath)
+	if err == nil {
+		t.Fatal("expected Load to reject config without handlers or tasks")
+	}
+	if !strings.Contains(err.Error(), "config must contain at least one handler or task") {
+		t.Fatalf("error = %q, want runnable section validation message", err.Error())
+	}
+}
+
+func TestLoadRejectsDuplicateTaskKinds(t *testing.T) {
+	tempDir := t.TempDir()
+	configPath := filepath.Join(tempDir, "sigvane.yaml")
+
+	writeTestFile(t, configPath, `
+version: 1
+server:
+  url: https://api.sigvane.com
+  api_key: plain-token
+tasks:
+  - kind: github_pr_review
+    command: ["./bin/review-pr"]
+  - kind: github_pr_review
+    command: ["./bin/review-pr-again"]
+`)
+
+	_, _, err := Load(configPath)
+	if err == nil {
+		t.Fatal("expected Load to reject duplicate task kinds")
+	}
+	if !strings.Contains(err.Error(), `tasks[1].kind duplicates kind "github_pr_review"`) {
+		t.Fatalf("error = %q, want duplicate task kind validation message", err.Error())
 	}
 }
 

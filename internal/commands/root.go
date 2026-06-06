@@ -11,8 +11,8 @@ import (
 func NewRootCommand() *cobra.Command {
 	root := &cobra.Command{
 		Use:           "sigvane",
-		Short:         "Sigvane CLI: poll inbox feeds and run handlers",
-		Long:          "Sigvane is a small Go worker that polls Sigvane inboxes via the inbox feed API and runs a local command per inbox item.",
+		Short:         "Sigvane CLI: poll inbox feeds or run claimed tasks",
+		Long:          "Sigvane is a small Go worker that polls Sigvane inboxes or claims Sigvane tasks and runs local commands.",
 		SilenceUsage:  true,
 		SilenceErrors: false,
 		RunE: func(_ *cobra.Command, _ []string) error {
@@ -21,6 +21,7 @@ func NewRootCommand() *cobra.Command {
 	}
 	root.CompletionOptions.DisableDefaultCmd = true
 	root.AddCommand(newInboxCommand())
+	root.AddCommand(newTaskCommand())
 	root.AddCommand(newConfigCommand())
 	root.AddCommand(newStateCommand())
 	root.AddCommand(newVersionCommand())

@@ -2,6 +2,7 @@
 package sigvane
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -42,6 +43,25 @@ type FeedResponse struct {
 	Items []InboxItem `json:"items"`
 }
 
+// Task is the leased task contract returned by the task claim API.
+type Task struct {
+	ID         string          `json:"id"`
+	Kind       string          `json:"kind"`
+	Payload    json.RawMessage `json:"payload"`
+	Attempts   int             `json:"attempts"`
+	LeaseToken string          `json:"leaseToken"`
+	// LeaseDeadline is advisory visibility from the backend. The CLI does not
+	// use local time to decide whether an outcome may be reported; the backend
+	// remains the authority through the leaseToken outcome response.
+	LeaseDeadline string `json:"leaseDeadline"`
+}
+
+// ClaimTaskResponse is the result of one task claim attempt.
+type ClaimTaskResponse struct {
+	Task    Task
+	HasTask bool
+}
+
 // HTTPStatusError reports a non-2xx HTTP response from the Sigvane API.
 type HTTPStatusError struct {
 	Method     string
@@ -80,7 +100,7 @@ func NewClient(baseURL string, apiKey string, httpClient *http.Client) (*Client,
 
 // ListInboxes returns the authenticated account's inboxes.
 func (c *Client) ListInboxes(ctx context.Context) ([]Inbox, error) {
-	req, err := c.newRequest(ctx, http.MethodGet, "/v1/inboxes", nil)
+	req, err := c.newRequest(ctx, http.MethodGet, "/v1/inboxes", nil, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -134,7 +154,7 @@ func (c *Client) ListInboxItems(ctx context.Context, inboxID string, cursor stri
 	}
 
 	path := fmt.Sprintf("/v1/inboxes/%s/items", inboxID)
-	req, err := c.newRequest(ctx, http.MethodGet, path, query)
+	req, err := c.newRequest(ctx, http.MethodGet, path, query, nil)
 	if err != nil {
 		return FeedResponse{}, err
 	}
@@ -159,13 +179,112 @@ func (c *Client) ListInboxItems(ctx context.Context, inboxID string, cursor stri
 	return feed, nil
 }
 
-func (c *Client) newRequest(ctx context.Context, method string, path string, query url.Values) (*http.Request, error) {
+// ClaimTask claims one available task whose kind matches one of the supplied kinds.
+func (c *Client) ClaimTask(ctx context.Context, kinds []string) (ClaimTaskResponse, error) {
+	const path = "/v1/tasks/claim"
+	req, err := c.newRequest(ctx, http.MethodPost, path, nil, struct {
+		Kinds []string `json:"kinds"`
+	}{
+		Kinds: kinds,
+	})
+	if err != nil {
+		return ClaimTaskResponse{}, err
+	}
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return ClaimTaskResponse{}, fmt.Errorf("claim task: %w", err)
+	}
+	defer func() {
+		_ = resp.Body.Close()
+	}()
+
+	if resp.StatusCode == http.StatusNoContent {
+		return ClaimTaskResponse{}, nil
+	}
+	if resp.StatusCode != http.StatusOK {
+		return ClaimTaskResponse{}, unexpectedStatus(http.MethodPost, path, resp)
+	}
+
+	var task Task
+	if err := json.NewDecoder(resp.Body).Decode(&task); err != nil {
+		return ClaimTaskResponse{}, fmt.Errorf("decode task claim response: %w", err)
+	}
+
+	return ClaimTaskResponse{
+		Task:    task,
+		HasTask: true,
+	}, nil
+}
+
+// CompleteTask reports successful completion for a leased task.
+func (c *Client) CompleteTask(ctx context.Context, taskID string, leaseToken string) error {
+	return c.reportTaskOutcome(ctx, http.MethodPost, fmt.Sprintf("/v1/tasks/%s/complete", taskID), struct {
+		LeaseToken string `json:"leaseToken"`
+	}{
+		LeaseToken: leaseToken,
+	})
+}
+
+// FailTask reports a failed leased task.
+func (c *Client) FailTask(ctx context.Context, taskID string, leaseToken string, reason string) error {
+	return c.reportTaskOutcome(ctx, http.MethodPost, fmt.Sprintf("/v1/tasks/%s/fail", taskID), struct {
+		LeaseToken string `json:"leaseToken"`
+		Reason     string `json:"reason"`
+	}{
+		LeaseToken: leaseToken,
+		Reason:     reason,
+	})
+}
+
+// RejectTask reports a rejected leased task.
+func (c *Client) RejectTask(ctx context.Context, taskID string, leaseToken string, reason string) error {
+	return c.reportTaskOutcome(ctx, http.MethodPost, fmt.Sprintf("/v1/tasks/%s/reject", taskID), struct {
+		LeaseToken string `json:"leaseToken"`
+		Reason     string `json:"reason"`
+	}{
+		LeaseToken: leaseToken,
+		Reason:     reason,
+	})
+}
+
+func (c *Client) reportTaskOutcome(ctx context.Context, method string, path string, body any) error {
+	req, err := c.newRequest(ctx, method, path, nil, body)
+	if err != nil {
+		return err
+	}
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("report task outcome: %w", err)
+	}
+	defer func() {
+		_ = resp.Body.Close()
+	}()
+
+	if resp.StatusCode != http.StatusOK {
+		return unexpectedStatus(method, path, resp)
+	}
+
+	return nil
+}
+
+func (c *Client) newRequest(ctx context.Context, method string, path string, query url.Values, body any) (*http.Request, error) {
 	endpoint := c.baseURL.ResolveReference(&url.URL{
 		Path:     path,
 		RawQuery: query.Encode(),
 	})
 
-	req, err := http.NewRequestWithContext(ctx, method, endpoint.String(), nil)
+	var reader io.Reader
+	if body != nil {
+		data, err := json.Marshal(body)
+		if err != nil {
+			return nil, fmt.Errorf("marshal request body for %s %s: %w", method, endpoint.String(), err)
+		}
+		reader = bytes.NewReader(data)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, method, endpoint.String(), reader)
 	if err != nil {
 		return nil, fmt.Errorf("build request %s %s: %w", method, endpoint.String(), err)
 	}
@@ -173,6 +292,9 @@ func (c *Client) newRequest(ctx context.Context, method string, path string, que
 	req.Header.Set("Accept", "application/json")
 	req.Header.Set("Authorization", "Bearer "+c.apiKey)
 	req.Header.Set("User-Agent", "sigvane-cli/"+version.Version)
+	if body != nil {
+		req.Header.Set("Content-Type", "application/json")
+	}
 
 	return req, nil
 }
