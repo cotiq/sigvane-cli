@@ -39,6 +39,16 @@ func TestNewRootCommand(t *testing.T) {
 		}
 	})
 
+	t.Run("fails on bare task invocation", func(t *testing.T) {
+		_, _, err := executeCommand("task")
+		if err == nil {
+			t.Fatal("expected task command to return an error")
+		}
+		if err.Error() != `task: choose a subcommand; try "sigvane task --help"` {
+			t.Fatalf("task error = %q, want %q", err.Error(), `task: choose a subcommand; try "sigvane task --help"`)
+		}
+	})
+
 	t.Run("fails on bare state invocation", func(t *testing.T) {
 		_, _, err := executeCommand("state")
 		if err == nil {
@@ -87,6 +97,31 @@ handlers:
   - inbox: github-repo
     command: ["/usr/bin/true"]
     stdin: none
+`)
+
+		stdout, stderr, err := executeCommand("config", "check", "--path", configPath)
+		if err != nil {
+			t.Fatalf("config check returned error: %v", err)
+		}
+		if stdout != "config ok: "+configPath+"\n" {
+			t.Fatalf("config check stdout = %q, want %q", stdout, "config ok: "+configPath+"\n")
+		}
+		if stderr != "" {
+			t.Fatalf("config check stderr = %q, want empty output", stderr)
+		}
+	})
+
+	t.Run("validates task-only config without network calls", func(t *testing.T) {
+		tempDir := t.TempDir()
+		configPath := filepath.Join(tempDir, "sigvane.yaml")
+		writeTestFile(t, configPath, `
+version: 1
+server:
+  url: https://api.sigvane.com
+  api_key: plain-token
+tasks:
+  - kind: github_pr_review
+    command: ["/usr/bin/true"]
 `)
 
 		stdout, stderr, err := executeCommand("config", "check", "--path", configPath)

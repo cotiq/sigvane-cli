@@ -58,6 +58,10 @@ func runInboxPoll(ctx context.Context, cmd *cobra.Command, opts inboxPollOptions
 		return err
 	}
 
+	if len(cfg.Handlers) == 0 {
+		return errors.New("handlers must contain at least one handler for inbox poll")
+	}
+
 	selectedHandlers, err := selectHandlers(cfg.Handlers, opts.slugFilter)
 	if err != nil {
 		return err
@@ -390,7 +394,7 @@ func listInboxItemsWithRetry(
 			return feed, nil
 		}
 
-		if !isTransientPollError(err) {
+		if !isTransientAPIError(err) {
 			return sigvane.FeedResponse{}, err
 		}
 
@@ -413,7 +417,7 @@ func listInboxItemsWithRetry(
 	}
 }
 
-func isTransientPollError(err error) bool {
+func isTransientAPIError(err error) bool {
 	if errors.Is(err, context.Canceled) {
 		return false
 	}

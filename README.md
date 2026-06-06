@@ -4,15 +4,15 @@
 [![Go Report Card](https://goreportcard.com/badge/github.com/cotiq/sigvane-cli)](https://goreportcard.com/report/github.com/cotiq/sigvane-cli)
 [![License](https://img.shields.io/github/license/cotiq/sigvane-cli)](LICENSE)
 
-Sigvane is a hosted GitHub webhook inbox. Sigvane CLI polls your inbox and runs a command on your machine for each
-event.
+Sigvane is a hosted GitHub webhook inbox and task coordinator. Sigvane CLI polls your inbox or claims queued tasks
+and runs commands on your machine.
 
 Learn more about Sigvane at [sigvane.com](https://sigvane.com). For CLI setup and full documentation, see
 [docs.sigvane.com](https://docs.sigvane.com).
 
 ## How it works
 
-GitHub -> Sigvane inbox -> Sigvane CLI -> your command
+GitHub -> Sigvane inbox or task queue -> Sigvane CLI -> your command
 
 ## Why
 
@@ -73,6 +73,10 @@ handlers:
   - inbox: github-repo
     command: ["/bin/sh", "-c", "cat"]
     stdin: full_item
+
+tasks:
+  - kind: github_pr_review
+    command: ["/bin/sh", "-c", "cat"]
 ```
 
 Replace `github-repo` with your inbox slug.
@@ -107,8 +111,37 @@ the command again.
 - `sigvane inbox poll` polls configured inboxes and runs their handlers.
 - `sigvane inbox poll --once` drains currently available items and exits.
 - `sigvane inbox poll <inbox-slug>` polls one configured inbox.
+- `sigvane task run` claims configured tasks and runs their handlers.
+- `sigvane task run --once` drains available tasks and exits when the queue is empty.
+- `sigvane task run <kind>` claims one configured task kind.
 - `sigvane state reset <inbox-slug>` resets the saved cursor for one inbox.
 - `sigvane version` prints build metadata.
+
+## Task handlers
+
+Task handlers are configured under `tasks`. For `github_pr_review`, the CLI writes the task payload JSON to the
+handler's stdin:
+
+```json
+{"repository":"cotiq/sigvane","pullRequestNumber":174}
+```
+
+The lease token stays inside the CLI and is not exposed to the handler.
+
+`leaseDeadline` is advisory visibility from the backend. The CLI does not use local time to decide whether an outcome
+may be reported; it always attempts the outcome after a handler finishes and lets the backend accept it with `200` or
+reject it with `409`. Handlers should be idempotent because interrupted or reaped tasks may be claimed again.
+
+Handler exit codes map to task outcomes:
+
+- `0` reports `complete`.
+- `79` reports `reject`.
+- Any other non-zero exit reports `fail`.
+
+Reserve exit code `79` for decline or not-applicable semantics. If your wrapper command calls other tools, translate
+their exits so an unrelated inner `79` does not leak out as a Sigvane `reject`.
+
+Until trigger actor allowlists are available, point `sigvane task run` only at controlled or private repositories.
 
 ## Build from source
 
