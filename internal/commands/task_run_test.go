@@ -298,47 +298,23 @@ tasks:
 	}
 }
 
-func TestTaskRunBacksOffAfterHandlerStartFailure(t *testing.T) {
+func TestTaskRunAbortsWithoutOutcomeWhenHandlerCannotStart(t *testing.T) {
 	tempDir := t.TempDir()
 	configPath := filepath.Join(tempDir, "sigvane.yaml")
 	t.Setenv("SIGVANE_API_KEY", "test-api-key")
 
 	const taskID = "00000000-0000-7000-8000-000000000174"
-	var sleeps []time.Duration
-	previousSleep := sleepContext
-	sleepContext = func(_ context.Context, d time.Duration) error {
-		sleeps = append(sleeps, d)
-		return nil
-	}
-	defer func() {
-		sleepContext = previousSleep
-	}()
-
 	claimRequests := 0
-	failRequests := 0
+	outcomeRequests := 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/v1/tasks/claim":
 			claimRequests++
-			if claimRequests == 1 {
-				w.Header().Set("Content-Type", "application/json")
-				_, _ = io.WriteString(w, `{"id":"`+taskID+`","kind":"github_pr_review","payload":{},"attempts":1,"leaseToken":"lease-token","leaseDeadline":"2026-06-06T12:00:00Z"}`)
-				return
-			}
-			w.WriteHeader(http.StatusNoContent)
-		case "/v1/tasks/" + taskID + "/fail":
-			failRequests++
-			var body map[string]string
-			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-				t.Fatalf("decode fail body: %v", err)
-			}
-			if body["leaseToken"] != "lease-token" {
-				t.Fatalf("fail leaseToken = %q, want lease-token", body["leaseToken"])
-			}
-			if !strings.Contains(body["reason"], "run task handler for kind") {
-				t.Fatalf("fail reason = %q, want start failure context", body["reason"])
-			}
-			w.WriteHeader(http.StatusOK)
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = io.WriteString(w, `{"id":"`+taskID+`","kind":"github_pr_review","payload":{},"attempts":1,"leaseToken":"lease-token","leaseDeadline":"2026-06-06T12:00:00Z"}`)
+		case "/v1/tasks/" + taskID + "/complete", "/v1/tasks/" + taskID + "/fail", "/v1/tasks/" + taskID + "/reject":
+			outcomeRequests++
+			t.Fatalf("outcome endpoint should not be called when handler cannot start: %s", r.URL.Path)
 		default:
 			t.Fatalf("unexpected request path %q", r.URL.Path)
 		}
@@ -356,17 +332,17 @@ tasks:
 `)
 
 	_, _, err := executeCommand("task", "run", "--config", configPath, "--once")
-	if err != nil {
-		t.Fatalf("task run returned error: %v", err)
+	if err == nil {
+		t.Fatal("expected task run to abort when handler cannot start")
 	}
-	if claimRequests != 2 {
-		t.Fatalf("claim request count = %d, want 2", claimRequests)
+	if !strings.Contains(err.Error(), `run task handler for kind "github_pr_review"`) {
+		t.Fatalf("error = %q, want handler start failure context", err.Error())
 	}
-	if failRequests != 1 {
-		t.Fatalf("fail request count = %d, want 1", failRequests)
+	if claimRequests != 1 {
+		t.Fatalf("claim request count = %d, want 1", claimRequests)
 	}
-	if len(sleeps) != 1 || sleeps[0] != taskHandlerStartFailureBackoff {
-		t.Fatalf("sleeps = %#v, want one start-failure backoff", sleeps)
+	if outcomeRequests != 0 {
+		t.Fatalf("outcome request count = %d, want 0", outcomeRequests)
 	}
 }
 

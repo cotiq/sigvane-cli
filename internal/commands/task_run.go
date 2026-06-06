@@ -19,8 +19,6 @@ const (
 	// taskRejectExitCode is the handler exit code that maps to a task reject outcome.
 	taskRejectExitCode     = 79
 	taskReasonTailByteSize = 8192
-	// taskHandlerStartFailureBackoff prevents tight claim/fail loops when the configured command cannot start.
-	taskHandlerStartFailureBackoff = time.Second
 )
 
 type taskOutcome string
@@ -150,27 +148,7 @@ func runTaskRun(ctx context.Context, cmd *cobra.Command, opts taskRunOptions) er
 			if errors.As(err, &shutdownTimeoutErr) {
 				return err
 			}
-
-			reason := strings.TrimSpace(err.Error())
-			if reason == "" {
-				reason = "handler failed before exit status was available"
-			}
-			outcomeCtx, cancelOutcome, duringShutdown := taskOutcomeReportContext(ctx, cfg.Server.ShutdownGracePeriod)
-			err := reportTaskOutcomeWithRetry(outcomeCtx, cmd, client, claim.Task, taskOutcomeFail, reason)
-			cancelOutcome()
-			if err != nil {
-				if shouldIgnoreOutcomeReportCancellation(err, duringShutdown) {
-					return nil
-				}
-				return err
-			}
-			if err := sleepContext(ctx, taskHandlerStartFailureBackoff); err != nil {
-				if errors.Is(err, context.Canceled) {
-					return nil
-				}
-				return err
-			}
-			continue
+			return err
 		}
 
 		outcome, reason := taskOutcomeForHandlerResult(result)

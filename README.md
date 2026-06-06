@@ -138,6 +138,10 @@ Handler exit codes map to task outcomes:
 - `79` reports `reject`.
 - Any other non-zero exit reports `fail`.
 
+If the handler command cannot be started, for example because the executable is missing or not executable, the CLI
+exits with an error and does not report a task outcome. This leaves the claimed task for backend lease recovery rather
+than terminally failing work that was never tried.
+
 Reserve exit code `79` for decline or not-applicable semantics. If your wrapper command calls other tools, translate
 their exits so an unrelated inner `79` does not leak out as a Sigvane `reject`.
 
