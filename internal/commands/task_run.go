@@ -277,7 +277,9 @@ func reportTaskOutcomeWithRetry(
 	ctx := parent
 	cancelShutdownContext := func() {}
 	usingShutdownContext := false
-	defer cancelShutdownContext()
+	defer func() {
+		cancelShutdownContext()
+	}()
 
 	return retryWithBackoff(retryWithBackoffOptions{
 		Operation: func() error {
