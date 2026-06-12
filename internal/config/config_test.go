@@ -80,7 +80,7 @@ func TestResolvePathReportsTriedLocations(t *testing.T) {
 	}
 }
 
-func TestLoadInterpolatesAPIKeyAndDefaultsPollInterval(t *testing.T) {
+func TestLoadInterpolatesAPIKeyAndAppliesDefaults(t *testing.T) {
 	tempDir := t.TempDir()
 	configPath := filepath.Join(tempDir, "sigvane.yaml")
 	t.Setenv("SIGVANE_API_KEY", "test-api-key")
@@ -88,7 +88,6 @@ func TestLoadInterpolatesAPIKeyAndDefaultsPollInterval(t *testing.T) {
 	writeTestFile(t, configPath, `
 version: 1
 server:
-  url: https://api.sigvane.com
   api_key: ${SIGVANE_API_KEY}
 handlers:
   - inbox: github-repo
@@ -106,6 +105,9 @@ handlers:
 	if cfg.Server.APIKey != "test-api-key" {
 		t.Fatalf("API key = %q, want %q", cfg.Server.APIKey, "test-api-key")
 	}
+	if cfg.Server.URL != DefaultServerURL {
+		t.Fatalf("server URL = %q, want %q", cfg.Server.URL, DefaultServerURL)
+	}
 	if cfg.Server.PollInterval != DefaultPollInterval {
 		t.Fatalf("poll interval = %s, want %s", cfg.Server.PollInterval, DefaultPollInterval)
 	}
@@ -114,6 +116,54 @@ handlers:
 	}
 	if cfg.Handlers[0].Stdin != StdinModeFullItem {
 		t.Fatalf("stdin mode = %q, want %q", cfg.Handlers[0].Stdin, StdinModeFullItem)
+	}
+}
+
+func TestLoadPreservesExplicitServerURL(t *testing.T) {
+	tempDir := t.TempDir()
+	configPath := filepath.Join(tempDir, "sigvane.yaml")
+
+	writeTestFile(t, configPath, `
+version: 1
+server:
+  url: https://staging-api.sigvane.test
+  api_key: plain-token
+handlers:
+  - inbox: github-repo
+    command: ["./bin/process-github"]
+    stdin: full_item
+`)
+
+	cfg, _, err := Load(configPath)
+	if err != nil {
+		t.Fatalf("Load returned error: %v", err)
+	}
+	if cfg.Server.URL != "https://staging-api.sigvane.test" {
+		t.Fatalf("server URL = %q, want %q", cfg.Server.URL, "https://staging-api.sigvane.test")
+	}
+}
+
+func TestLoadRejectsInvalidExplicitServerURL(t *testing.T) {
+	tempDir := t.TempDir()
+	configPath := filepath.Join(tempDir, "sigvane.yaml")
+
+	writeTestFile(t, configPath, `
+version: 1
+server:
+  url: /relative
+  api_key: plain-token
+handlers:
+  - inbox: github-repo
+    command: ["./bin/process-github"]
+    stdin: full_item
+`)
+
+	_, _, err := Load(configPath)
+	if err == nil {
+		t.Fatal("expected Load to reject relative server URL")
+	}
+	if !strings.Contains(err.Error(), "server.url must be an absolute URL") {
+		t.Fatalf("error = %q, want server URL validation message", err.Error())
 	}
 }
 

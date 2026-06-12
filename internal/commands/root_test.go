@@ -91,7 +91,6 @@ func TestNewRootCommand(t *testing.T) {
 		writeTestFile(t, configPath, `
 version: 1
 server:
-  url: https://api.sigvane.com
   api_key: plain-token
 handlers:
   - inbox: github-repo
@@ -117,7 +116,6 @@ handlers:
 		writeTestFile(t, configPath, `
 version: 1
 server:
-  url: https://api.sigvane.com
   api_key: plain-token
 tasks:
   - kind: github_pr_review

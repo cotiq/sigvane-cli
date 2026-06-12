@@ -13,7 +13,6 @@ import (
 const defaultConfigTemplate = `version: 1
 
 server:
-  url: https://api.sigvane.com
   api_key: ${SIGVANE_API_KEY}
   poll_interval: 5s
   shutdown_grace_period: 30s

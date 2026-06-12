@@ -14,6 +14,9 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+// DefaultServerURL is the Sigvane API endpoint used when the config omits server.url.
+const DefaultServerURL = "https://api.sigvane.com"
+
 // DefaultPollInterval is the idle sleep interval when the config omits poll_interval.
 const DefaultPollInterval = 5 * time.Second
 
@@ -127,6 +130,9 @@ func DefaultPath() (string, error) {
 }
 
 func (c *Config) applyDefaults() {
+	if c.Server.URL == "" {
+		c.Server.URL = DefaultServerURL
+	}
 	if c.Server.PollInterval == 0 {
 		c.Server.PollInterval = DefaultPollInterval
 	}
