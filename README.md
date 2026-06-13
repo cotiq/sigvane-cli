@@ -64,7 +64,6 @@ sigvane config init
 version: 1
 
 server:
-  url: https://api.sigvane.com
   api_key: ${SIGVANE_API_KEY}
   poll_interval: 5s
   shutdown_grace_period: 30s
@@ -88,6 +87,8 @@ Set your API key as an environment variable:
   ```
 
 Or configure it directly in the config file.
+
+The CLI uses the hosted Sigvane API by default. Set `server.url` only when using a different API endpoint.
 
 3. Check the config:
 
