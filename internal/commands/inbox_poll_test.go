@@ -395,6 +395,72 @@ handlers:
 	}
 }
 
+func TestInboxPollForwardsHandlerStdoutUnmodified(t *testing.T) {
+	t.Setenv("SIGVANE_API_KEY", "test-api-key")
+	t.Setenv("GO_WANT_HELPER_PROCESS", "1")
+
+	const inboxID = "00000000-0000-7000-8000-000000000001"
+	const itemID = "00000000-0000-7000-8000-000000000123"
+	// Deliberately unterminated: a handler that emits no trailing newline proves
+	// poll copies raw bytes instead of forwarding line by line.
+	const handlerOutput = "handler-emitted-event-output"
+
+	bodyBase64 := base64.StdEncoding.EncodeToString([]byte(`{"action":"opened"}`))
+
+	tempDir := t.TempDir()
+	configPath := filepath.Join(tempDir, "sigvane.yaml")
+	statePath := filepath.Join(tempDir, "state", "state.json")
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/v1/inboxes":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = io.WriteString(w, `[{"id":"`+inboxID+`","slug":"github-repo","provider":"github","createdAt":"2026-04-01T10:00:00Z","updatedAt":"2026-04-01T10:00:00Z"}]`)
+		case "/v1/inboxes/" + inboxID + "/items":
+			w.Header().Set("Content-Type", "application/json")
+			switch got := r.URL.Query().Get("cursor"); got {
+			case "":
+				_, _ = io.WriteString(w, `{"items":[{"id":"`+itemID+`","inboxId":"`+inboxID+`","inbox":"github-repo","recordedAt":"2026-04-03T10:05:00Z","headers":{"content-type":["application/json"]},"body":"`+bodyBase64+`","providerDeliveryId":null}],"nextCursor":"`+itemID+`"}`)
+			case itemID:
+				_, _ = io.WriteString(w, `{"items":[],"nextCursor":"`+itemID+`"}`)
+			default:
+				t.Fatalf("cursor = %q, want empty cursor or %q", got, itemID)
+			}
+		default:
+			t.Fatalf("unexpected request path %q", r.URL.Path)
+		}
+	}))
+	defer server.Close()
+
+	writeTestFile(t, configPath, `
+version: 1
+server:
+  url: `+server.URL+`
+  api_key: ${SIGVANE_API_KEY}
+handlers:
+  - inbox: github-repo
+    command: ["`+os.Args[0]+`", "-test.run=TestHelperProcess", "--", "stdout-raw", "`+handlerOutput+`"]
+    stdin: none
+`)
+
+	stdout, stderr, err := executeCommand(
+		"inbox",
+		"poll",
+		"--config", configPath,
+		"--once",
+		"--state", statePath,
+	)
+	if err != nil {
+		t.Fatalf("inbox poll returned error: %v", err)
+	}
+	if stdout != handlerOutput {
+		t.Fatalf("stdout = %q, want %q", stdout, handlerOutput)
+	}
+	if stderr != "" {
+		t.Fatalf("stderr = %q, want empty output", stderr)
+	}
+}
+
 func TestInboxPollContinuousReloopsImmediatelyThenSleeps(t *testing.T) {
 	tempDir := t.TempDir()
 	configPath := filepath.Join(tempDir, "sigvane.yaml")
@@ -1226,6 +1292,11 @@ func TestHelperProcess(_ *testing.T) {
 		}
 		if err := os.WriteFile(outputPath, data, 0o600); err != nil {
 			os.Exit(4)
+		}
+		os.Exit(0)
+	case "stdout-raw":
+		if _, err := io.WriteString(os.Stdout, args[separator+2]); err != nil {
+			os.Exit(5)
 		}
 		os.Exit(0)
 	case "mkdir":
