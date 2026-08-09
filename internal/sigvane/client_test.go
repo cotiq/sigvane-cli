@@ -28,6 +28,16 @@ func TestNewClientRejectsInvalidBaseURL(t *testing.T) {
 	})
 }
 
+func TestNewClientAppliesDefaultRequestTimeout(t *testing.T) {
+	client, err := NewClient("https://api.example.com", "token", nil)
+	if err != nil {
+		t.Fatalf("NewClient returned error: %v", err)
+	}
+	if client.httpClient.Timeout != DefaultRequestTimeout {
+		t.Fatalf("http client timeout = %s, want %s", client.httpClient.Timeout, DefaultRequestTimeout)
+	}
+}
+
 func TestListInboxesUsesResolvedPathAndHeaders(t *testing.T) {
 	const apiKey = "test-api-key"
 
