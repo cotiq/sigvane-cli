@@ -10,9 +10,15 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"time"
 
 	"github.com/cotiq/sigvane-cli/internal/version"
 )
+
+// DefaultRequestTimeout bounds one full API exchange for the default HTTP
+// client. Every Sigvane endpoint is a small request/response JSON call with no
+// long polling, so a request running this long is stuck, not slow.
+const DefaultRequestTimeout = 30 * time.Second
 
 // Client talks to the Sigvane management and inbox feed APIs.
 type Client struct {
@@ -88,7 +94,7 @@ func NewClient(baseURL string, apiKey string, httpClient *http.Client) (*Client,
 		return nil, fmt.Errorf("base URL %q must be absolute", baseURL)
 	}
 	if httpClient == nil {
-		httpClient = http.DefaultClient
+		httpClient = &http.Client{Timeout: DefaultRequestTimeout}
 	}
 
 	return &Client{
