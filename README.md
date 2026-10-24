@@ -4,6 +4,9 @@
 [![Go Report Card](https://goreportcard.com/badge/github.com/cotiq/sigvane-cli)](https://goreportcard.com/report/github.com/cotiq/sigvane-cli)
 [![License](https://img.shields.io/github/license/cotiq/sigvane-cli)](LICENSE)
 
+**Archived.** The Sigvane service was shut down on 24 October 2026, so this CLI has no backend anymore. The code stays
+here for reference. Postmortem: [POSTMORTEM.md](POSTMORTEM.md)
+
 Sigvane is a hosted GitHub webhook inbox and task coordinator. Sigvane CLI polls your inbox or claims queued tasks
 and runs commands on your machine.
 
@@ -70,12 +73,12 @@ server:
 
 handlers:
   - inbox: github-repo
-    command: ["/bin/sh", "-c", "cat"]
+    command: [ "/bin/sh", "-c", "cat" ]
     stdin: full_item
 
 tasks:
   - kind: github_pr_review
-    command: ["/bin/sh", "-c", "cat"]
+    command: [ "/bin/sh", "-c", "cat" ]
 ```
 
 Replace `github-repo` with your inbox slug.
@@ -124,7 +127,10 @@ Task handlers are configured under `tasks`. For `github_pr_review`, the CLI writ
 handler's stdin:
 
 ```json
-{"repository":"cotiq/sigvane","pullRequestNumber":174}
+{
+  "repository": "cotiq/sigvane",
+  "pullRequestNumber": 174
+}
 ```
 
 The lease token stays inside the CLI and is not exposed to the handler.
